@@ -1,54 +1,87 @@
-'use strict';
-
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 
-/**
- * In-memory user store (simulates a database).
- * Passwords are pre-hashed with bcryptjs (salt rounds = 10).
- * Replace with a real DB query in production.
- */
-const users = [
-  {
-    id: 1,
-    email: 'raj@example.com',
-    // bcrypt hash of "Password@123"
-    password: '$2a$10$7EqJtq98hPqEX7fNZaFWoOa0zjp.HJrXDVxS9UtzRr5R3M0y9kVEC',
-    name: 'Raj Sanghvi',
-  },
-];
+// In-memory mock user store (replace with DB query in production)
+const users = [];
 
 /**
- * Find a user record by email address.
+ * Registers a user into the mock store (used by registration flow).
  * @param {string} email
- * @returns {object|null}
+ * @param {string} hashedPassword
+ */
+const saveUser = (email, hashedPassword) => {
+  users.push({ email, password: hashedPassword });
+};
+
+/**
+ * Finds a user by email from the mock store.
+ * @param {string} email
+ * @returns {object|undefined}
  */
 const findUserByEmail = (email) => {
-  return users.find((u) => u.email === email) || null;
+  return users.find((user) => user.email === email);
 };
 
 /**
- * Compare a plain-text password with a bcrypt hash.
- * @param {string} plainPassword
- * @param {string} hashedPassword
+ * Verifies the plain-text password against the stored bcrypt hash.
+ * @param {string} plainPassword - The password submitted by the user.
+ * @param {string} hashedPassword - The bcrypt hashed password stored in DB.
  * @returns {Promise<boolean>}
  */
-const comparePassword = async (plainPassword, hashedPassword) => {
-  return bcrypt.compare(plainPassword, hashedPassword);
+const verifyPassword = async (plainPassword, hashedPassword) => {
+  return await bcrypt.compare(plainPassword, hashedPassword);
 };
 
 /**
- * Sign a JWT token using JWT_SECRET from environment variables.
- * Token expires in 1 hour.
- * @param {object} payload  - data to embed (e.g. { id, email })
- * @returns {string}        - signed JWT string
+ * Generates a signed JWT access token.
+ * @param {object} payload - Data to embed in the token (userId, email).
+ * @returns {string} - Signed JWT token.
  */
-const generateToken = (payload) => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error('JWT_SECRET environment variable is not set');
-  }
-  return jwt.sign(payload, secret, { expiresIn: '1h' });
+const generateAccessToken = (payload) => {
+  const secret = process.env.JWT_SECRET || 'default_jwt_secret';
+  const options = { expiresIn: process.env.JWT_EXPIRES_IN || '1h' };
+  return jwt.sign(payload, secret, options);
 };
 
-module.exports = { findUserByEmail, comparePassword, generateToken };
+/**
+ * Core login service.
+ * Validates credentials and returns a JWT token on success.
+ *
+ * @param {string} email - User's email address.
+ * @param {string} password - Plain-text password from request.
+ * @returns {Promise<{ token: string }>}
+ * @throws {Error} with status 401 if credentials are invalid.
+ */
+const loginUser = async (email, password) => {
+  // Step 1: Look up user by email
+  const user = findUserByEmail(email);
+
+  // Step 2: User not found — generic error to prevent user enumeration
+  if (!user) {
+    const error = new Error('Invalid email or password.');
+    error.status = 401;
+    throw error;
+  }
+
+  // Step 3: Compare submitted password with stored bcrypt hash
+  const isPasswordValid = await verifyPassword(password, user.password);
+
+  if (!isPasswordValid) {
+    const error = new Error('Invalid email or password.');
+    error.status = 401;
+    throw error;
+  }
+
+  // Step 4: Generate JWT access token — NO plaintext password in payload
+  const token = generateAccessToken({ email: user.email });
+
+  return { token };
+};
+
+module.exports = {
+  saveUser,
+  findUserByEmail,
+  verifyPassword,
+  generateAccessToken,
+  loginUser,
+};
